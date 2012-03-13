@@ -1,0 +1,15 @@
+Snapper is a command-line utility that sniffs your local network for active
+TCP connections (only those with PSH/ACK flags set) and then sends RST
+(reset) packets to terminate those connections (using RAW sockets).
+Therefore "snapper" is a program that generates a single packet DoS attack.
+It is written as a proof-of-concept for a "Protocol Design" class at Aalto
+University.
+
+
+Sending spurious RST Packets can be used for malicious purposes (e.g., DoS
+attack [1]) or closing down suspicious connections. In recent years, it has
+been used by ISPs to close down P2P connections (e.g., by Comcast:
+http://en.wikipedia.org/wiki/Comcast#Network_neutrality)
+
+
+[1] Detecting Forged TCP Reset Packets; N. Weaver, R. Sommer, V. Paxson

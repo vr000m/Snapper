@@ -1,9 +1,10 @@
 /*
+    Note a lot of code is borrowed from here and there.
+    
     gcc -Wall -pedantic snapper.c -lpcap -o snapper
     http://www.tcpdump.org/pcap.html
     http://tools.ietf.org/html/rfc793
     http://tools.ietf.org/html/rfc1071
-
 */
 
 #define APP_NAME        "snapper"
@@ -48,10 +49,9 @@
 #define HOME_IP "192.168.0.15"
 /*
 This should be autodetected...
-"86.50.128.192"
 */
 
-#define CAPTURE_COUNT -1           /* number of packets to capture */
+#define CAPTURE_COUNT 2           /* number of packets to capture, -1: non-stop */
 
 /* Ethernet header */
 struct sniff_ethernet {
@@ -149,9 +149,14 @@ void print_app_banner(void)
 return;
 }
 
-/* This piece of code has been used many times in a lot of differents tools. */
-/* I haven't been able to determine the author of the code but it looks like */
-/* this is a public domain implementation of the checksum algorithm */
+/* 
+    Copy pasted the code from the interwebs. Outputs of in_cksum() and
+    checksum_comp() are equivalent, but note that in checksum_comp() we
+    transform the checksum using htons() before returning the value.
+    
+    Read: http://tools.ietf.org/html/rfc1071 for the algorithm
+ */
+ 
 unsigned short in_cksum(unsigned short *addr,int len){
     register int sum = 0;
     u_short answer = 0;
@@ -171,7 +176,7 @@ unsigned short in_cksum(unsigned short *addr,int len){
 
     /* mop up an odd byte, if necessary */
     if (nleft == 1) {
-    *(u_char *)(&answer) = *(u_char *)w ;
+    *(u_char *)(&answer) = *(u_char *) w;
     sum += answer;
     }
 
@@ -181,7 +186,7 @@ unsigned short in_cksum(unsigned short *addr,int len){
     answer = ~sum; /* truncate to 16 bits */
     return(answer);
 
-} /* End of in_cksum() */
+}
 
 uint16_t checksum_comp( uint16_t *addr , int len ) {   
     int count = len;
@@ -203,7 +208,7 @@ uint16_t checksum_comp( uint16_t *addr , int len ) {
     while (sum>>16)
         sum = (sum & 0xffff) + (sum >> 16);
    checksum = ~sum;
-   return checksum;
+   return htons(checksum);
 }
 
 
@@ -327,7 +332,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 }
 
 void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short sport, u_short dport, u_short ident, unsigned int seq, u_char  ttl, unsigned int ack) {
-    #if 0
+    #if 1
     int sockfd;
     struct sockaddr_in dstaddr;
     char datagram[4096];  /* buffer for datagrams */
@@ -359,7 +364,7 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
     memset (datagram, 0, 4096);          /* zero out the buffer */
     iph->ip_vhl = 0x45;                  /* version=4,header_length=5 */
     iph->ip_tos = 0;                     /* type of service not needed */
-    iph->ip_len = IPTCPHDRSIZE;          /* no payload for RST */
+    iph->ip_len = (IPTCPHDRSIZE);        /* no payload for RST */
                                          /* wierd thing [TODO][BUG]:
                                                 htons() for linux
                                                 no htons for mac os x/BSD 
@@ -407,18 +412,10 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
     phdr->tcplen = htons(TCPHDRSIZE);       
                     /* in bytes the tcp segment length default:0x14*/
                     
-    tcph->th_sum = checksum_comp((unsigned short *)tcph, IPTCPHDRSIZE);
-    /*
-        in_cksum((unsigned short *)(tcph), IPTCPHDRSIZE)
-        htons(checksum_comp((unsigned short *)tcph, IPTCPHDRSIZE));
-    */
+    tcph->th_sum = in_cksum((unsigned short *)(tcph), IPTCPHDRSIZE);
     printf(" TCP sum=%x\t",tcph->th_sum);
 
     iph->ip_sum = checksum_comp((unsigned short *)iph, IPHDRSIZE); 
-    /*
-        in_cksum((unsigned short *)(iph), IPHDRSIZE);
-        htons(checksum_comp((unsigned short *)iph, IPHDRSIZE));
-    */
     printf(" IP sum=%x\n",iph->ip_sum);
     
 
@@ -440,6 +437,7 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
 
 void showPacketDetails(const struct sniff_ip *iph, const struct sniff_tcp *tcph)
 {
+    /*should cleanup: 0 to DEBUG*/
     #if 0
     printf(" vhl=%x\n",iph->ip_vhl);       
     printf(" tos=%x\n",iph->ip_tos);       
@@ -482,6 +480,7 @@ void readTCPflag(u_char tcp_flags)
 }
 
 void whichPacketIsIt(u_char protocol) {
+    /*should cleanup: 0 to DEBUG*/
     #if 0
     switch(protocol) {
         case IPPROTO_TCP:
@@ -505,7 +504,6 @@ void whichPacketIsIt(u_char protocol) {
 
 int main(int argc, char **argv)
 {
-
     char *dev = NULL;               /* capture device name */
     char errbuf[PCAP_ERRBUF_SIZE];  /* error buffer */
     /*

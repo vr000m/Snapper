@@ -15,7 +15,6 @@
  Tested to run on the MAC.
  
  The TCP reset packets (TCP RST) are sent when the utility sees ACK packets. 
- If there is an open connection, this will not send RST to those connections.
  */
 
 #define APP_NAME        "snapper"
@@ -200,9 +199,9 @@ void print_app_usage(void);
 
 void readTCPflag(u_char tcp_flags);
 
-void whichPacketIsIt(u_char protocol);
-
 void showPacketDetails(const struct sniff_ip *iph, const struct sniff_tcp *tcph);
+
+void ParseTCPPacket(const u_char *packet);
 
 void createRSTpacket(struct in_addr srcip, struct in_addr destip, u_short sport, u_short dport,
                      u_short ident, unsigned int seq, u_char ttl, unsigned int ack);
@@ -311,20 +310,10 @@ void print_app_usage(void)
  */
 void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
-  static int count = 1;                   /* packet counter */
   const struct sniff_ethernet *ethernet;  /* The ethernet header [1] */
   const struct sniff_ip *ip;              /* The IP header */
-  const struct sniff_tcp *tcp;            /* The TCP header */
-  const u_char *payload;                  /* Packet payload */
   
   int size_ip;
-  int size_tcp;
-  int size_payload;
-  
-  char srcHost[INET_ADDRSTRLEN];
-  char dstHost[INET_ADDRSTRLEN];
-  unsigned int srcport;
-  unsigned int dstport;
   
   /* define ethernet header */
   ethernet = (struct sniff_ethernet*)(packet);
@@ -337,19 +326,52 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     printf("   * Invalid IP header length: %u bytes\n", size_ip);
     return;
   }
+
+  switch(ip->ip_p) {
+    case IPPROTO_TCP:
+      /*printf("   Protocol: TCP\n");*/
+      ParseTCPPacket((u_char *)ip);
+      break;
+    case IPPROTO_UDP:
+      printf("   Protocol: UDP\n");
+      break;
+    case IPPROTO_ICMP:
+      printf("   Protocol: ICMP\n");
+      break;
+    case IPPROTO_IP:
+      printf("   Protocol: IP\n");
+      break;
+    default:
+      printf("   Protocol: unknown\n");
+      break;
+  }
+}
+
+void ParseTCPPacket(const u_char *packet)
+{
+    static int count = 1;                   /* packet counter */
+    const struct sniff_ip *ip;              /* The IP header */
+    const struct sniff_tcp *tcp;            /* The TCP header */
+    const u_char *payload;                  /* Packet payload */
     
-  strcpy(srcHost, inet_ntoa(ip->ip_src));
-  strcpy(dstHost, inet_ntoa(ip->ip_dst));
-  
-  whichPacketIsIt(ip->ip_p);
-  
-  /* only respond to TCP packets */    
-  if (ip->ip_p == IPPROTO_TCP)
-  {
+    int size_ip;
+    int size_tcp;
+    int size_payload;
+
+    char srcHost[INET_ADDRSTRLEN];
+    char dstHost[INET_ADDRSTRLEN];
+    unsigned int srcport;
+    unsigned int dstport;
+    
+    ip = (struct sniff_ip*)(packet);
+    
+    strcpy(srcHost, inet_ntoa(ip->ip_src));
+    strcpy(dstHost, inet_ntoa(ip->ip_dst));
+    
     /*if((strcmp(srcHost, HOME_IP)==0)|| (strcmp(dstHost, HOME_IP)==0))*/
     {
       /* define/compute tcp header offset */
-      tcp = (struct sniff_tcp*)(packet + ETHHDRSIZE + IPHDRSIZE);
+      tcp = (struct sniff_tcp*)(packet + IPHDRSIZE);
       size_tcp = TH_OFF(tcp)*4;
       if (size_tcp < TCPHDRSIZE) {
         printf("   * Invalid TCP header length: %u bytes\n", size_tcp);
@@ -359,7 +381,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
       dstport = ntohs(tcp->th_dport);
       
       /* define/compute tcp payload (segment) offset */
-      payload = (u_char *)(packet + ETHHDRSIZE + IPHDRSIZE + TCPHDRSIZE);
+      payload = (u_char *)(packet + IPHDRSIZE + TCPHDRSIZE);
       
       /* compute tcp payload (segment) size */
       size_payload = ntohs(ip->ip_len) - (size_ip + size_tcp);
@@ -389,12 +411,12 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         Create spurious RST packet
         Send the ACK number as sequence number to the source
         Send the incremented SEQ to the target
+        
+        if (tcph->th_flags & TH_ACK)        
       */
       createRSTpacket(ip->ip_dst, ip->ip_src, tcp->th_dport, tcp->th_sport, ip->ip_id, tcp->th_ack, ip->ip_ttl, tcp->th_ack);
       createRSTpacket(ip->ip_src, ip->ip_dst, tcp->th_sport, tcp->th_dport, ip->ip_id, htonl(ntohl(tcp->th_seq)+1), ip->ip_ttl, tcp->th_ack);
     }
-  }
-  return;
 }
 
 /*
@@ -475,13 +497,14 @@ void createRSTpacket(struct  in_addr srcip, struct  in_addr destip, u_short spor
   tcph->th_seq   = seq;                /* SYN sequence the should be 
                                         incremented in one dir and
                                         echoed in the other */
-  tcph->th_ack   = 0;                /* No ACK needed? or echo ACK?*/
+  tcph->th_ack   = 0;                  /* No ACK needed? or echo ACK?*/
   tcph->th_offx2 = 0x50;               /* 50h (5 offset) ( 8 0s reserved )*/
   tcph->th_flags = TH_RST;             /* initial connection request FLAG*/
   tcph->th_win   =  0;                 /* Window size default: htons(4500) + rand()%1000  */
-  /* maximum allowed window size 65k*/
+                                       /* maximum allowed window size 65k*/
   tcph->th_urp   = 0;                  /* no urgent pointer */
   tcph->th_sum=0;                      /* Checksum is set to zero until computed */
+
   /* pseudo header for tcp checksum */
   phdr = (struct pseudo_hdr *) (datagram + IPTCPHDRSIZE);
   phdr->src = srcip.s_addr;
@@ -554,29 +577,6 @@ void readTCPflag(u_char tcp_flags)
   if (tcp_flags & TH_CWR) { printf(" CWR"); }
 }
 
-void whichPacketIsIt(u_char protocol) {
-  /*should cleanup: 0 to DEBUG*/
-#if 0
-  switch(protocol) {
-    case IPPROTO_TCP:
-      printf("   Protocol: TCP\n");
-      break;
-    case IPPROTO_UDP:
-      printf("   Protocol: UDP\n");
-      break;
-    case IPPROTO_ICMP:
-      printf("   Protocol: ICMP\n");
-      break;
-    case IPPROTO_IP:
-      printf("   Protocol: IP\n");
-      break;
-    default:
-      printf("   Protocol: unknown\n");
-      break;
-  }
-#endif
-}
-
 int main(int argc, char **argv)
 {
   char *dev = NULL;               /* capture device name */
@@ -594,7 +594,7 @@ int main(int argc, char **argv)
    *  (tcp[13] == 0x10) for only ACK packets
    *  ip for any IP packet
    */
-  char filter_exp[] = "(tcp[13] == 0x10)";       
+  char filter_exp[] = "(tcp[13] == 0x10)";
   pcap_if_t *alldevices, *device;
   pcap_addr_t listaddr;
   int i =0;

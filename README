@@ -2,7 +2,7 @@ Snapper is a command-line utility that sniffs your local network for active
 TCP connections (only those with ACK flags set) and then sends RST (reset)
 packets to terminate those connections (using RAW sockets). Therefore
 "snapper" is a program that generates a single packet DoS attack. It is
-written as a proof-of-concept for a "Protocol Design" class at Aalto
+written as a proof-of-concept for a "Protocol Design" [PD] class at Aalto
 University. You may have to start your browser in "incognito mode", so that
 the browser does not load the pages from the cache. If this works
 correctly, your browser tabs may not load or may load partially. You can
@@ -41,3 +41,4 @@ function to parse the packet.
 [2] http://www.tcpdump.org/release/libpcap-1.2.1.tar.gz
 [3] http://wiki.wireshark.org/CaptureFilters
 [wireshark] http://www.wireshark.org/
+[PD] https://noppa.aalto.fi/noppa/kurssi/s-38.3159/

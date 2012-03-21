@@ -1,0 +1,11 @@
+Line 632L650, printf("IP ADDR: %s\n", cnet); does not detect proper
+addresses and therefore prints nothing
+
+filter_exp[] is hard coded.
+
+for mac the length in iph->ip_len = (IPTCPHDRSIZE);
+does not need to be htonl() but maybe true for linux. 
+a. verify 
+b. use compiler flag
+
+add _DEBUG flag to Makefile and also create option for make release.

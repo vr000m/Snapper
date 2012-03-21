@@ -116,6 +116,8 @@ bpf_u_int32 net;                /* network address */
 char cmask[INET_ADDRSTRLEN];    /* dot notation of the network mask    */
 bpf_u_int32 mask;               /* subnet mask */
 pcap_t *handle;                 /* packet capture handle */
+int pkt_count = 1;              /* packet counter */
+
 
 
 /* 
@@ -256,30 +258,6 @@ unsigned short in_cksum(unsigned short *addr,int len){
   
 }
 
-uint16_t checksum_comp( uint16_t *addr , int len ) {   
-  int count = len;
-  uint16_t temp;
-  register long sum = 0;
-  uint16_t checksum;
-  
-  while( count > 1 )  {
-    temp = htons(*addr++);
-    sum += temp;
-    count -= 2;
-  }
-  
-  /*  Add left-over byte*/
-  if( count > 0 )
-    sum += * (unsigned char *) addr;
-  
-  /* wrap the 32-bit sum into 16 bits */
-  while (sum>>16)
-    sum = (sum & 0xffff) + (sum >> 16);
-  checksum = ~sum;
-  /*modified "return checksum" to "return htons(checksum)" to be consistent
-  with in_cksum*/
-  return htons(checksum); 
-}
 
 
 void signal_handler(int signal)
@@ -295,10 +273,11 @@ void signal_handler(int signal)
 void print_app_usage(void)
 {
   
-  printf("Usage: %s [interface]\n", APP_NAME);
+  printf("Usage: %s [interface] [filter]\n", APP_NAME);
   printf("\n");
   printf("Options:\n");
-  printf("    interface    Listen on <interface> for packets.\n");
+  printf("    interface     Listen on <interface> for packets.\n");
+  printf("    filter        PCAP Filter to apply on packets.\n");
   printf("\n");
   
   return;
@@ -312,8 +291,9 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 {
   const struct sniff_ethernet *ethernet;  /* The ethernet header [1] */
   const struct sniff_ip *ip;              /* The IP header */
-  
   int size_ip;
+  char srcHost[INET_ADDRSTRLEN];
+  char dstHost[INET_ADDRSTRLEN];
   
   /* define ethernet header */
   ethernet = (struct sniff_ethernet*)(packet);
@@ -326,30 +306,36 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     printf("   * Invalid IP header length: %u bytes\n", size_ip);
     return;
   }
-
+  
+  strcpy(srcHost, inet_ntoa(ip->ip_src));
+  strcpy(dstHost, inet_ntoa(ip->ip_dst));
+  printf("P%d:\t", pkt_count++);
+  printf("%s\t->\t", srcHost);
+  printf(" %s\t", dstHost);
+  
   switch(ip->ip_p) {
     case IPPROTO_TCP:
-      /*printf("   Protocol: TCP\n");*/
+      printf("TCP\t");
       ParseTCPPacket((u_char *)ip);
       break;
     case IPPROTO_UDP:
-      printf("   Protocol: UDP\n");
+      printf("UDP\t");
       break;
     case IPPROTO_ICMP:
-      printf("   Protocol: ICMP\n");
+      printf("ICMP\t");
       break;
     case IPPROTO_IP:
-      printf("   Protocol: IP\n");
+      printf("IP\t");
       break;
     default:
-      printf("   Protocol: unknown\n");
+      printf("Protocol: unknown\t");
       break;
   }
+  printf("\n");
 }
 
 void ParseTCPPacket(const u_char *packet)
 {
-    static int count = 1;                   /* packet counter */
     const struct sniff_ip *ip;              /* The IP header */
     const struct sniff_tcp *tcp;            /* The TCP header */
     const u_char *payload;                  /* Packet payload */
@@ -358,15 +344,10 @@ void ParseTCPPacket(const u_char *packet)
     int size_tcp;
     int size_payload;
 
-    char srcHost[INET_ADDRSTRLEN];
-    char dstHost[INET_ADDRSTRLEN];
     unsigned int srcport;
     unsigned int dstport;
     
     ip = (struct sniff_ip*)(packet);
-    
-    strcpy(srcHost, inet_ntoa(ip->ip_src));
-    strcpy(dstHost, inet_ntoa(ip->ip_dst));
     
     /*if((strcmp(srcHost, HOME_IP)==0)|| (strcmp(dstHost, HOME_IP)==0))*/
     {
@@ -386,16 +367,14 @@ void ParseTCPPacket(const u_char *packet)
       /* compute tcp payload (segment) size */
       size_payload = ntohs(ip->ip_len) - (size_ip + size_tcp);
       
-      printf("P%d:\t", count++);
-      printf("%s:%d\t->\t", srcHost, srcport);
-      printf(" %s:%d\t", dstHost,dstport);
+      printf("%d\t->\t", srcport);
+      printf(" %d\t", dstport);
       #if _DEBUG
       printf("id: %d\t", htons(ip->ip_id));
       printf("seq: %u\t", ntohl(tcp->th_seq));  
       printf("ack: %u\t", ntohl(tcp->th_ack));  
-      printf("sum: %x", (ip->ip_sum));
+      printf("sum: %x\n", (ip->ip_sum));
       #endif
-      printf("\n");
       
         
       /*
@@ -607,15 +586,20 @@ int main(int argc, char **argv)
   print_app_banner();
   
   /* check for capture device name on command-line */
-  if (argc == 2) {
+  if (argc >= 2) {
     dev = argv[1];
   }
-  else if (argc > 2) {
+  
+  if (argc == 3) {
+    strcpy(filter_exp,argv[2]);
+  }
+  
+  if (argc > 3 ) {
     fprintf(stderr, "error: unrecognized command-line options\n\n");
     print_app_usage();
     exit(EXIT_FAILURE);
   }
-  else {
+  else if (argc == 1 ){
     if (pcap_findalldevs(&alldevices, errbuf) == -1) {
       fprintf(stderr,"Error in pcap_findalldevs: %s\n", errbuf);
       exit(1);
@@ -697,10 +681,8 @@ int main(int argc, char **argv)
   
   /* print capture info */
   printf("Device: %s\n", dev);
-  /*
-   printf("Number of packets: %d\n", CAPTURE_COUNT);
+  /*printf("Number of packets: %d\n", CAPTURE_COUNT);*/
    printf("Filter expression: %s\n", filter_exp);
-   */
   
   /* open capture device */
   handle = pcap_open_live(dev, SNAP_LEN, 1, 1000, errbuf); 

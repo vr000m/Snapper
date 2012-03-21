@@ -1,7 +1,7 @@
 Line 632L650, printf("IP ADDR: %s\n", cnet); does not detect proper
 addresses and therefore prints nothing
 
-filter_exp[] is hard coded.
+filter_exp[] is hard coded. code needs getopt() block to parse command line.
 
 for mac the length in iph->ip_len = (IPTCPHDRSIZE);
 does not need to be htonl() but maybe true for linux. 
